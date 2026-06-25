@@ -1,0 +1,37 @@
+# =============================================================================
+# Baseline threshold alerting rules (Phase 4) — the "dumb" threshold lane that
+# the ML lane (Phase 9) will outperform. These PUSH to Alertmanager.
+# Each alert carries a `service` label so Alertmanager groups by service.
+#
+# CPU note: a single-process Python service is GIL-bound to ~1 core, and OTel's
+# process.cpu.utilization is normalised by core count (caps ~0.2). The standard
+# per-service CPU% is cores-used*100 via rate(process_cpu_time) — that is what
+# `top`/`kubectl top` report, so "CPU > 85%" = 85% of a core here.
+# =============================================================================
+groups:
+  - name: aiops-thresholds
+    rules:
+      - alert: HighProcessCPU
+        # 2m rate window smooths sub-second CPU jitter; `for: 1m` is the sustain.
+        expr: 100 * sum by (job) (rate(process_cpu_time[2m])) > 85
+        for: 1m
+        labels:
+          severity: warning
+          source: prometheus-threshold
+          service: '{{ $labels.job }}'
+          fault: cpu
+        annotations:
+          summary: 'High CPU on {{ $labels.job }}'
+          description: 'Process CPU {{ printf "%.0f" $value }}% (> 85% of a core) for 1m on {{ $labels.job }}.'
+
+      - alert: HighErrorRate
+        expr: 100 * sum by (service_name) (rate(calls{status_code="STATUS_CODE_ERROR"}[1m])) / clamp_min(sum by (service_name) (rate(calls[1m])), 1) > 10
+        for: 1m
+        labels:
+          severity: critical
+          source: prometheus-threshold
+          service: '{{ $labels.service_name }}'
+          fault: error
+        annotations:
+          summary: 'High error rate on {{ $labels.service_name }}'
+          description: 'Span error rate {{ printf "%.0f" $value }}% (> 10%) for 1m on {{ $labels.service_name }}.'

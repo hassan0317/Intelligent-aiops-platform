@@ -1,0 +1,15 @@
+---
+# CPU-hog remediation. Restarting the container kills the CPU burn threads
+# (fresh process). True horizontal scaling is the production variant
+# (docker compose --scale / k8s HPA); a named-container compose service can't be
+# scaled in place, so we restart to clear the hog.
+- name: Scale-and-restart origin service (kill CPU hog)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Restart container "{{ target }}" to clear the CPU hog
+      community.docker.docker_container:
+        name: "{{ target }}"
+        state: started
+        restart: true

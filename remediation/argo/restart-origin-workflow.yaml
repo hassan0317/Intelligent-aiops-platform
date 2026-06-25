@@ -1,0 +1,40 @@
+# =============================================================================
+# Argo Workflows — DOCUMENTED ALTERNATIVE to the Ansible remediation path
+# (§5.5: Ansible primary, Argo as the documented alternative).
+# In a Kubernetes deployment, Alertmanager's webhook would trigger an Argo
+# Events Sensor that submits this Workflow; the parameters (service, fault) come
+# from the same RCA payload, and the step restarts the ORIGIN service.
+# Not run in the Compose demo — kept as the production-path artifact.
+# =============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: remediate-origin-
+spec:
+  entrypoint: remediate
+  arguments:
+    parameters:
+      - name: target-service     # = RCA origin service (e.g. payments-service)
+      - name: fault-type         # = inferred fault (latency|cpu|memory|error)
+  templates:
+    - name: remediate
+      inputs:
+        parameters:
+          - name: target-service
+          - name: fault-type
+      steps:
+        - - name: restart-origin
+            template: kubectl-rollout-restart
+            arguments:
+              parameters:
+                - name: target-service
+                  value: "{{inputs.parameters.target-service}}"
+    - name: kubectl-rollout-restart
+      inputs:
+        parameters:
+          - name: target-service
+      container:
+        image: bitnami/kubectl:latest
+        command: [sh, -c]
+        args:
+          - "kubectl rollout restart deployment/{{inputs.parameters.target-service}}"

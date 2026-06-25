@@ -1,0 +1,31 @@
+# Secrets — never commit real credentials (ISO 27001, Phase 12)
+.env
+secrets/*
+!secrets/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Node / dashboard (Phase 11)
+node_modules/
+dashboard/dist/
+dashboard/build/
+
+# ML artifacts. The TRAINED model binaries the API image bakes ARE versioned, so a
+# clean clone builds and runs without a retrain. Derived datasets stay ignored
+# (regenerate with `ai/preprocessor/features.py` + the train scripts).
+*.joblib
+*.h5
+*.keras
+!models/base_models.joblib
+!models/autoencoder.keras
+ai/**/saved_model/
+data/*.parquet
+
+# OS / editor
+.DS_Store
+Thumbs.db

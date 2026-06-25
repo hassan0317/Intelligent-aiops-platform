@@ -1,0 +1,59 @@
+# =============================================================================
+# OTel Collector — PHASE 3 (full routing) configuration.
+# Routes the three signals AND derives per-service RED metrics from spans via
+# the spanmetrics connector (Fix #3): TRACES -> calls + duration histogram ->
+# Prometheus series the AI model can consume.
+#
+#   traces  : otlp            -> [otlp/jaeger (human drill-down), spanmetrics]
+#   metrics : otlp + spanmetrics -> batch -> prometheusremotewrite -> Prometheus
+#   logs    : otlp            -> batch -> loki
+# =============================================================================
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+connectors:
+  spanmetrics:                        # <-- Fix #3: traces -> metrics
+    namespace: ""                     # bare metric names: `calls` + `duration_bucket` (gate query)
+    histogram:
+      explicit:
+        buckets: [5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2.5s]
+    # NOTE: service.name AND status.code are DEFAULT spanmetrics dimensions;
+    # re-listing them is rejected as a duplicate, so they are implicit here.
+    # The span-derived series still carry `service_name` + `status_code` labels
+    # (verified below). Only http.route is a genuinely added dimension.
+    dimensions:
+      - name: http.route
+    metrics_flush_interval: 15s
+
+processors:
+  batch: {}
+
+exporters:
+  prometheusremotewrite:
+    endpoint: "http://prometheus:9090/api/v1/write"
+    add_metric_suffixes: false        # keep span-derived histogram queryable as `duration_bucket` (gate query)
+  loki:
+    endpoint: "http://loki:3100/loki/api/v1/push"
+  otlp/jaeger:
+    endpoint: "jaeger:4317"
+    tls:
+      insecure: true
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [otlp/jaeger, spanmetrics]
+    metrics:
+      receivers: [otlp, spanmetrics]
+      processors: [batch]
+      exporters: [prometheusremotewrite]
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [loki]

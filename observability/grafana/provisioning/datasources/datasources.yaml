@@ -1,0 +1,53 @@
+# =============================================================================
+# Grafana datasources (Phase 4, Fix #1): Prometheus + Loki + Jaeger, with
+# trace <-> logs <-> metrics correlation so a slow span jumps to its logs/metrics.
+# =============================================================================
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      httpMethod: POST
+
+  - name: Loki
+    uid: loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    jsonData:
+      # logs -> traces: extract the JSON traceid field and link to Jaeger
+      derivedFields:
+        - name: TraceID
+          matcherType: regex
+          matcherRegex: '"traceid":"(\w+)"'
+          url: '$${__value.raw}'
+          datasourceUid: jaeger
+
+  - name: Jaeger
+    uid: jaeger
+    type: jaeger
+    access: proxy
+    url: http://jaeger:16686
+    jsonData:
+      # traces -> logs: open the same trace's logs in Loki
+      tracesToLogsV2:
+        datasourceUid: loki
+        filterByTraceID: true
+        spanStartTimeShift: '-1h'
+        spanEndTimeShift: '1h'
+        tags:
+          - key: service.name
+            value: service_name
+      # traces -> metrics: jump to span-derived RED metrics in Prometheus
+      tracesToMetrics:
+        datasourceUid: prometheus
+        spanStartTimeShift: '-1h'
+        spanEndTimeShift: '1h'
+        queries:
+          - name: 'span p95 latency'
+            query: 'histogram_quantile(0.95, sum by (le, service_name) (rate(duration_bucket{service_name="$${__span.tags["service.name"]}"}[1m])))'

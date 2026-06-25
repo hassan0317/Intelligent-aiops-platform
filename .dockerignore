@@ -1,0 +1,10 @@
+.venv/
+.git/
+**/__pycache__/
+**/*.pyc
+data/
+*.parquet
+dashboard/node_modules/
+dashboard/dist/
+_*.log
+_*.py

@@ -1,0 +1,14 @@
+---
+# Self-healing: restart the ORIGIN service container. Restarting starts a fresh
+# process, which clears in-process fault state (injected latency / errors /
+# memory balloon) and restores healthy behaviour.
+- name: Restart origin service (self-healing)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Restart container "{{ target }}"
+      community.docker.docker_container:
+        name: "{{ target }}"
+        state: started
+        restart: true

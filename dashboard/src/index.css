@@ -1,0 +1,57 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: dark; }
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  background:
+    radial-gradient(900px 480px at 85% -10%, rgba(99, 102, 241, 0.10), transparent 60%),
+    radial-gradient(700px 420px at -5% 0%, rgba(139, 92, 246, 0.06), transparent 55%),
+    #0a0a0c;
+  background-attachment: fixed;
+  color: #e4e4e7;
+  font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
+  font-feature-settings: "cv02", "cv03", "cv04", "ss01";
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* tabular figures everywhere numbers matter; mono for logs/code */
+.nums { font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }
+.font-mono, code, pre {
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+::selection { background: rgba(99, 102, 241, 0.32); color: #fff; }
+
+/* slim dark scrollbars */
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #2a2a30; border-radius: 6px; }
+::-webkit-scrollbar-thumb:hover { background: #3a3a42; }
+
+/* visible, on-brand keyboard focus */
+:focus-visible { outline: 2px solid rgba(99, 102, 241, 0.7); outline-offset: 2px; border-radius: 6px; }
+
+/* recharts: kill focus outlines on bars/dots */
+.recharts-surface:focus { outline: none; }
+
+/* range inputs: slim branded track + thumb */
+input[type="range"] {
+  -webkit-appearance: none; appearance: none;
+  height: 4px; border-radius: 999px; background: #27272a; accent-color: #6366f1;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  height: 14px; width: 14px; border-radius: 999px; background: #818cf8;
+  border: 2px solid #0a0a0c; box-shadow: 0 0 0 1px rgba(129, 140, 248, 0.5);
+  cursor: pointer; transition: transform .12s ease;
+}
+input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
+input[type="range"]:disabled { opacity: 0.45; }
+
+/* subtle lift on interactive surfaces */
+.lift { transition: transform .15s ease, border-color .15s ease, background-color .15s ease; }
+.lift:hover { transform: translateY(-1px); }

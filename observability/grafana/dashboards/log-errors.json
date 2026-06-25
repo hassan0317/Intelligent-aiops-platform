@@ -1,0 +1,98 @@
+{
+  "uid": "log-errors",
+  "title": "Logs & Errors (Loki)",
+  "description": "Log volume and error analysis from Loki using the structured `level` stream label. Live ERROR logs expose a TraceID link that jumps to the matching trace in Jaeger (datasource-level derived field).",
+  "tags": ["aiops", "logs"],
+  "timezone": "Asia/Karachi",
+  "schemaVersion": 39,
+  "version": 2,
+  "editable": true,
+  "graphTooltip": 1,
+  "refresh": "10s",
+  "time": { "from": "now-30m", "to": "now" },
+  "links": [
+    { "title": "AIOps dashboards", "type": "dashboards", "tags": ["aiops"], "asDropdown": true, "icon": "external link", "includeVars": true, "keepTime": true, "targetBlank": false }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "service",
+        "label": "Service",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "definition": "label_values(process_memory_usage, job)",
+        "query": { "qryType": 1, "query": "label_values(process_memory_usage, job)", "refId": "PrometheusVariableQueryEditor-VariableQuery" },
+        "refresh": 2, "sort": 1, "includeAll": true, "allValue": ".+", "multi": true,
+        "current": { "selected": true, "text": ["All"], "value": ["$__all"] }
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      { "builtIn": 1, "datasource": { "type": "grafana", "uid": "-- Grafana --" }, "enable": true, "hide": true, "iconColor": "rgba(0, 211, 255, 1)", "name": "Annotations & Alerts", "type": "dashboard" },
+      { "name": "Firing alerts", "datasource": { "type": "prometheus", "uid": "prometheus" }, "enable": true, "expr": "ALERTS{alertstate=\"firing\"}", "iconColor": "red", "titleFormat": "{{alertname}}", "textFormat": "{{service}} · {{severity}}", "tagKeys": "service,severity,fault", "step": "30s" }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "Error logs / min",
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 0 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 1 }, { "color": "red", "value": 100 } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "background_solid", "graphMode": "area", "justifyMode": "center", "textMode": "value" },
+      "targets": [ { "refId": "A", "expr": "sum(count_over_time({service_name=~\"$service\", level=\"ERROR\"} [1m])) or vector(0)" } ]
+    },
+    {
+      "id": 2, "type": "stat", "title": "Warning logs / min",
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 0 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 1 } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "background_solid", "graphMode": "area", "justifyMode": "center", "textMode": "value" },
+      "targets": [ { "refId": "A", "expr": "sum(count_over_time({service_name=~\"$service\", level=\"WARN\"} [1m])) or vector(0)" } ]
+    },
+    {
+      "id": 3, "type": "stat", "title": "Total logs / min",
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 0 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0, "color": { "mode": "fixed", "fixedColor": "blue" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "blue", "value": null } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "area", "justifyMode": "center", "textMode": "value" },
+      "targets": [ { "refId": "A", "expr": "sum(count_over_time({service_name=~\"$service\"} [1m])) or vector(0)" } ]
+    },
+
+    { "id": 100, "type": "row", "title": "Log rates", "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 4 } },
+    {
+      "id": 4, "type": "timeseries", "title": "Error log lines / min by service",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "bars", "lineInterpolation": "linear", "lineWidth": 1, "fillOpacity": 70, "gradientMode": "none", "showPoints": "never", "spanNulls": false, "stacking": { "mode": "normal", "group": "A" }, "scaleDistribution": { "type": "linear" }, "thresholdsStyle": { "mode": "off" } }, "color": { "mode": "palette-classic" }, "unit": "short", "min": 0, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] }, "mappings": [] }, "overrides": [] },
+      "options": { "tooltip": { "mode": "multi", "sort": "desc" }, "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["lastNotNull", "sum", "max"] } },
+      "targets": [ { "refId": "A", "expr": "sum by (service_name) (count_over_time({service_name=~\"$service\", level=\"ERROR\"} [1m])) or (0 * sum by (service_name) (count_over_time({service_name=~\"$service\"} [1m])))", "legendFormat": "{{service_name}}" } ]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Log volume by level",
+      "description": "All log lines/min grouped by the structured level label (INFO / WARN / ERROR).",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "fieldConfig": {
+        "defaults": { "custom": { "drawStyle": "bars", "lineInterpolation": "linear", "lineWidth": 1, "fillOpacity": 80, "gradientMode": "none", "showPoints": "never", "spanNulls": false, "stacking": { "mode": "normal", "group": "A" }, "scaleDistribution": { "type": "linear" }, "thresholdsStyle": { "mode": "off" } }, "color": { "mode": "palette-classic" }, "unit": "short", "min": 0, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] }, "mappings": [] },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "ERROR" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ] },
+          { "matcher": { "id": "byName", "options": "WARN" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } } ] },
+          { "matcher": { "id": "byName", "options": "INFO" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } } ] }
+        ]
+      },
+      "options": { "tooltip": { "mode": "multi", "sort": "desc" }, "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["lastNotNull", "sum"] } },
+      "targets": [ { "refId": "A", "expr": "sum by (level) (count_over_time({service_name=~\"$service\"} [1m]))", "legendFormat": "{{level}}" } ]
+    },
+
+    { "id": 101, "type": "row", "title": "Live error logs", "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 13 } },
+    {
+      "id": 6, "type": "logs", "title": "Live logs (newest first; ERROR rows highlighted) — click TraceID to open the trace in Jaeger",
+      "description": "Live tail of the structured log stream for the selected services. Grafana colors each line by its `level` (ERROR = red, WARN = orange, INFO = green), so errors stand out. Every line carries a TraceID derived field that opens the matching trace in Jaeger.",
+      "gridPos": { "h": 11, "w": 24, "x": 0, "y": 14 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "options": { "showTime": true, "showLabels": false, "showCommonLabels": false, "wrapLogMessage": true, "prettifyLogMessage": true, "enableLogDetails": true, "dedupStrategy": "none", "sortOrder": "Descending", "enableInfiniteScrolling": true },
+      "targets": [ { "refId": "A", "expr": "{service_name=~\"$service\"}" } ]
+    }
+  ]
+}

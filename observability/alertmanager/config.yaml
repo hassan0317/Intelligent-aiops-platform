@@ -1,0 +1,17 @@
+# =============================================================================
+# Alertmanager — the SINGLE alerting plane (Fix #7). Receives BOTH Prometheus
+# threshold alerts (pushed) and AI confirmations (POST /api/v2/alerts, Phase 9);
+# groups/dedupes/routes them; the ONLY trigger for remediation is its webhook.
+# =============================================================================
+route:
+  receiver: 'remediation'
+  group_by: ['service', 'alertname']
+  group_wait: 10s
+  group_interval: 30s
+  repeat_interval: 1m      # re-fire the remediation webhook while an incident persists
+
+receivers:
+  - name: 'remediation'
+    webhook_configs:
+      - url: 'http://remediation:8080/hook'
+        send_resolved: true

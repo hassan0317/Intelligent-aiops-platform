@@ -1,0 +1,7 @@
+start,end,service,fault,severity,duration_s
+1781967313.081,1781967394.317,payments-service,latency,250,80
+1781967439.321,1781967520.433,orders-service,cpu,1,80
+1781967565.435,1781967646.531,payments-service,error,0.5,80
+1781967806.929,1781967969.696,payments-service,memory,256,80
+1781968014.7,1781968095.746,frontend-api,latency,300,80
+1781968140.748,1781968221.98,frontend-api,error,0.4,80

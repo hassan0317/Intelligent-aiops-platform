@@ -1,0 +1,255 @@
+# =============================================================================
+# Observability & AIOps Platform — single compose file (Topic 8 / ANPP-OP)
+# -----------------------------------------------------------------------------
+# Phase 0 (Foundation & repo scaffolding): scaffold-only.
+#   - Declares the named bridge network `aiops-net` that every later phase joins.
+#   - `services:` is intentionally empty here; services are added in the phase
+#     that "brings them up":
+#       Phase 1  -> frontend-api, orders-service, payments-service
+#       Phase 3  -> otel-collector
+#       Phase 4  -> prometheus, loki, jaeger, grafana, alertmanager
+#       Phase 9  -> ai inference engine
+#       Phase 10 -> remediation engine
+#       Phase 11 -> dashboard
+# Compose project is named `aiops` so its resources never collide with other
+# stacks already running on this host.
+# =============================================================================
+name: aiops
+
+services:
+  # --- Phase 3: storage backends the collector exports to --------------------
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-remote-write-receiver"   # accept collector remote-write
+      - "--web.enable-lifecycle"               # allow config reload (Phase 4)
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/prometheus/rules:/etc/prometheus/rules:ro
+    networks: [aiops-net]
+    ports: ["9090:9090"]
+
+  loki:
+    image: grafana/loki:3.2.1
+    container_name: loki
+    command: ["-config.file=/etc/loki/loki-config.yaml"]
+    volumes:
+      - ./observability/loki/loki-config.yaml:/etc/loki/loki-config.yaml:ro
+    networks: [aiops-net]
+    ports: ["3100:3100"]
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    container_name: jaeger
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"           # OTLP receivers on 4317/4318
+      # all-in-one keeps spans IN MEMORY with no cap by default -> it grows unbounded
+      # under load (seen at 600MB+) and was a real contributor to host OOM on this
+      # 7.3GB machine. Bound retention to the most-recent traces (enough for incident
+      # drill-down) so its footprint stays ~100MB.
+      MEMORY_MAX_TRACES: "10000"
+    networks: [aiops-net]
+    ports: ["16686:16686"]                     # Jaeger UI (OTLP 4317 stays internal)
+
+  # --- Phase 4: Grafana (mandatory, Fix #1) + Alertmanager -------------------
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      # Land on the production "AIOps Platform — Overview" dashboard instead of the
+      # empty Grafana home (the file is bind-mounted at the path below).
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/platform-overview.json
+      # Default every dashboard/time-picker to Pakistan Standard Time (UTC+5).
+      GF_DATE_FORMATS_DEFAULT_TIMEZONE: Asia/Karachi
+      TZ: Asia/Karachi
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    networks: [aiops-net]
+    ports: ["3000:3000"]
+    depends_on:
+      prometheus:
+        condition: service_started
+      loki:
+        condition: service_started
+      jaeger:
+        condition: service_started
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: alertmanager
+    command: ["--config.file=/etc/alertmanager/config.yaml"]
+    volumes:
+      - ./observability/alertmanager/config.yaml:/etc/alertmanager/config.yaml:ro
+    networks: [aiops-net]
+    ports: ["9093:9093"]
+
+  # --- Phase 11: custom AIOps dashboard (React/Tailwind/Tremor) ---------------
+  dashboard:
+    build: ./dashboard
+    image: aiops-dashboard
+    container_name: dashboard
+    networks: [aiops-net]
+    ports: ["3002:80"]                  # host 3002 (3000=grafana, 3001=other stack)
+    depends_on:
+      aiops-api:
+        condition: service_started      # nginx proxies /api -> aiops-api:8050
+
+  # --- Phase 10: remediation engine (Alertmanager webhook -> Ansible) --------
+  remediation:
+    build: ./remediation
+    image: aiops-remediation
+    container_name: remediation
+    networks: [aiops-net]
+    ports: ["8080:8080"]
+    environment:
+      TZ: Asia/Karachi                # Pakistan Standard Time (UTC+5) for local clocks/logs
+      # SRE email escalation (env-driven SMTP). Leave SMTP_HOST/SRE_EMAIL empty
+      # to run in "would-page" mode (audited, no real email sent).
+      SMTP_HOST: "${SMTP_HOST:-}"
+      SMTP_PORT: "${SMTP_PORT:-587}"
+      SMTP_USER: "${SMTP_USER:-}"
+      SMTP_PASSWORD: "${SMTP_PASSWORD:-}"
+      SMTP_FROM: "${SMTP_FROM:-}"
+      SMTP_STARTTLS: "${SMTP_STARTTLS:-true}"
+      SRE_EMAIL: "${SRE_EMAIL:-}"
+      FLAP_WINDOW_S: "${FLAP_WINDOW_S:-600}"
+      FLAP_THRESHOLD: "${FLAP_THRESHOLD:-3}"
+      REMEDIATION_COOLDOWN_S: "${REMEDIATION_COOLDOWN_S:-120}"  # recovery window after a restart;
+        # must outlast the 60s cpu trailing-avg + re-confirm so a heal doesn't echo-refire (flap)
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock   # Ansible restarts origin containers
+      - ./remediation/audit:/app/audit              # audit log (ISO 27001 / ITIL evidence)
+
+  # --- Pro console: aiops-api control plane (AI loop + load gen + REST/control) -
+  aiops-api:
+    build:
+      context: .
+      dockerfile: control-plane/Dockerfile
+    image: aiops-api
+    container_name: aiops-api
+    networks: [aiops-net]
+    ports: ["8050:8050"]
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Karachi               # Pakistan Standard Time (UTC+5): live clock + log timestamps
+      PROMETHEUS_URL: "http://prometheus:9090"
+      LOKI_URL: "http://loki:3100"
+      ALERTMANAGER_URL: "http://alertmanager:9093"
+      FRONTEND_URL: "http://frontend-api:8000"
+      ORDERS_URL: "http://orders-service:8000"
+      PAYMENTS_URL: "http://payments-service:8000"
+      LOAD_TARGET: "http://frontend-api:8000/checkout"
+      AUDIT_LOG: "/app/remediation/audit/audit.log"
+      INCIDENT_THRESHOLD: "0.6"
+      INFER_INTERVAL_S: "15"
+      INFER_WARMUP_S: "55"
+      INFER_CONFIRM_N: "2"
+      # ARM/DISARM auto-remediation. Detection + RCA always run; the ACT step (post to
+      # Alertmanager -> Ansible restart) only fires when armed. Default DISARMED so a benign
+      # operating-point blip can never restart a healthy service at idle — arming is an
+      # explicit operator action (toggle in the dashboard, or set this to "true").
+      AUTO_REMEDIATE: "${AUTO_REMEDIATE:-false}"
+      # ADAPTIVE evidence gate: re-estimate "normal" from a rolling window of recent
+      # non-incident traffic, so legitimate operating-point drift (heap growth, latency
+      # creep, load level) is absorbed instead of flagged. Base models/XGBoost untouched;
+      # only the gate + localizer re-base. Set false to use the frozen training norms.
+      ROLLING_BASELINE: "${ROLLING_BASELINE:-true}"
+      ROLLING_WINDOW: "${ROLLING_WINDOW:-40}"          # windows kept in the rolling baseline (~10 min @15s)
+      ROLLING_MIN_SAMPLES: "${ROLLING_MIN_SAMPLES:-12}"  # warm up on frozen norms until this many seen
+      REQUIRE_EVIDENCE: "${REQUIRE_EVIDENCE:-true}"   # gate incidents on a real signal (anti-phantom)
+      EVIDENCE_Z: "${EVIDENCE_Z:-2.0}"
+      LAT_FLOOR_MS: "${LAT_FLOOR_MS:-375}"            # latency must exceed this (ms) to fire (anti-drift)
+      CPU_FLOOR: "${CPU_FLOOR:-0.8}"                  # cpu must exceed this (cores) to fire; on 16GB benign p95~0.63, burn~0.92 (anti-jitter)
+      MEM_FLOOR_MB: "${MEM_FLOOR_MB:-200}"            # mem must exceed this (MB resident) to fire; idle heap ~85MB, balloon ~340MB (anti-restart-loop)
+      SOFT_Z: "${SOFT_Z:-1.5}"                        # 'suspected' amber only if a real metric is >=this; pure PCA/AE drift -> ok (display-only)
+      LOAD_WORKERS: "12"            # the trained operating point -> stable baseline
+      TF_CPP_MIN_LOG_LEVEL: "3"
+    volumes:
+      - ./remediation/audit:/app/remediation/audit:ro   # read the audit trail
+    depends_on:
+      prometheus: { condition: service_started }
+      loki: { condition: service_started }
+      alertmanager: { condition: service_started }
+      frontend-api: { condition: service_healthy }
+      orders-service: { condition: service_healthy }
+      payments-service: { condition: service_healthy }
+
+  # --- Phase 2/3: OpenTelemetry Collector (full routing in Phase 3) ----------
+  otel-collector:
+    build: ./otel                 # re-based official 0.116.0 binary (see otel/Dockerfile)
+    image: aiops-otelcol:0.116.0
+    container_name: otel-collector
+    command: ["--config=/etc/otelcol/collector.yaml"]
+    volumes:
+      - ./otel/collector.yaml:/etc/otelcol/collector.yaml:ro
+    networks: [aiops-net]
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+    depends_on:
+      prometheus:
+        condition: service_started
+      loki:
+        condition: service_started
+      jaeger:
+        condition: service_started
+
+  # --- Phase 1: 3-service dependency mesh (Fix #5) -------------------------
+  # frontend-api -> orders-service -> payments-service.
+  # Real internal HTTP calls, so a fault in the leaf cascades upward.
+  # Phase 2: each emits traces + metrics + logs over OTLP to otel-collector.
+  payments-service:
+    build: ./services/payments-service
+    container_name: payments-service
+    networks: [aiops-net]
+    ports: ["8003:8000"]          # host 8003 (avoids ports used by other stacks)
+    environment:
+      BASE_LATENCY_S: "0.03"
+      CPU_WORK_ITERS: "20000"
+      OTEL_SERVICE_NAME: "payments-service"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
+    depends_on:
+      otel-collector:
+        condition: service_started
+
+  orders-service:
+    build: ./services/orders-service
+    container_name: orders-service
+    networks: [aiops-net]
+    ports: ["8002:8000"]
+    environment:
+      DOWNSTREAM_URL: "http://payments-service:8000/process"
+      OTEL_SERVICE_NAME: "orders-service"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
+    depends_on:
+      otel-collector:
+        condition: service_started
+      payments-service:
+        condition: service_healthy
+
+  frontend-api:
+    build: ./services/frontend-api
+    container_name: frontend-api
+    networks: [aiops-net]
+    ports: ["8001:8000"]
+    environment:
+      DOWNSTREAM_URL: "http://orders-service:8000/order"
+      OTEL_SERVICE_NAME: "frontend-api"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
+    depends_on:
+      otel-collector:
+        condition: service_started
+      orders-service:
+        condition: service_healthy
+
+networks:
+  aiops-net:
+    name: aiops-net
+    driver: bridge
