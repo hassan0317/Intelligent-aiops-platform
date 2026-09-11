@@ -202,28 +202,12 @@ AI Confirmed Incident ──► Alertmanager Webhook ──► Remediation Engin
             Append Structured Record to audit.log
 ```
 
-### Remediation Playbooks & Escalations
-
-| Fault Type | Action / Playbook | Trigger / Routing |
-| :--- | :--- | :--- |
-| `cpu` | `scale_and_restart.yml` | Restarts container to kill runaway GIL burn threads. |
-| `latency` | `restart_service.yml` | Restarts container to clear thread pool starvation and deadlocks. |
-| `memory` | `restart_service.yml` | Restarts container to clear buffer bloat and memory leaks. |
-| `error` | `restart_service.yml` | Restarts container to reset corrupted internal state/pools. |
-| `disk`, `network`, `security` | **SRE Escalation** | **No playbook by design**; restarting cannot fix full disks or network cuts. Pages human SREs. |
-| *Any* | **SRE Escalation** | Triggered if playbook returns non-zero exit code (`remediation_failed`). |
-| *Any* | **SRE Escalation** | Triggered if incident re-fires 3 or more times within 10 minutes (`flapping`). |
-
 ### Guardrails
 - **Human-in-the-Loop Arming**: Auto-remediation is **disarmed by default** (`AUTO_REMEDIATE=false`). Detection and RCA run continuously; container restarts only execute when armed.
 - **Cooldown Window**: Mesh-wide 120-second cooldown (`REMEDIATION_COOLDOWN_S=120`) prevents cascade restart storms while services boot.
 - **Escalation De-duplication**: SRE email alerts are deduplicated to once every 300s per `(service, fault)` pair.
 
-### Compliance & Audit Trail
-Every remediation action and escalation appends structured JSON to `remediation/audit/audit.log`:
-```json
-{"ts": "2026-09-11T14:22:15Z", "action": "remediate", "playbook": "restart_service.yml", "target": "payments-service", "fault": "latency", "alertname": "AIConfirmedIncident", "source": "ai-ensemble", "ansible_status": "successful", "rc": 0, "reason": "payments_service__lat_p95 elevated (z=4.1, val=412ms >= floor 375ms)"}
-```
+
 
 ---
 
@@ -305,36 +289,6 @@ python ai/base_models/train.py
 python ai/ensemble/train.py   # Or: make train
 ```
 
----
-
-## 🏢 Kubernetes Production Path
-
-In Kubernetes environments, Ansible runner is substituted with cloud-native **Argo Workflows**. A tested workflow manifest is included in [`remediation/argo/restart-origin-workflow.yaml`](remediation/argo/restart-origin-workflow.yaml):
-
-```yaml
-apiVersion: argoproj.io/v1alpha1
-kind: Workflow
-metadata:
-  generateName: remediate-origin-
-spec:
-  entrypoint: remediate
-  arguments:
-    parameters:
-      - name: target-service
-      - name: fault-type
-  templates:
-    - name: remediate
-      steps:
-        - - name: restart-origin
-            template: kubectl-rollout-restart
-            arguments:
-              parameters: [{name: target-service, value: "{{inputs.parameters.target-service}}"}]
-    - name: kubectl-rollout-restart
-      container:
-        image: bitnami/kubectl:latest
-        command: [sh, -c]
-        args: ["kubectl rollout restart deployment/{{inputs.parameters.target-service}}"]
-```
 
 ---
 
